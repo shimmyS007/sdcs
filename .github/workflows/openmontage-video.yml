@@ -1,0 +1,161 @@
+name: OpenMontage - Generate Historical Film
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OPENMONTAGE_UPSTREAM: 481aeca47491b095274bb93ad96b9e82d1b8a19e
+    steps:
+      - name: Checkout project and production brief
+        uses: actions/checkout@v4
+
+      - name: Confirm media generation credentials before spending resources
+        shell: bash
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          VOLCENGINE_API_KEY: ${{ secrets.VOLCENGINE_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEEPSEEK_API_KEY}" || -z "${VOLCENGINE_API_KEY}" ]]; then
+            echo "::error::OpenMontage Studio needs model credentials for real footage. Add DEEPSEEK_API_KEY and VOLCENGINE_API_KEY as GitHub Actions repository secrets. No fake/video-placeholder file will be generated."
+            exit 1
+          fi
+          test -s openmontage/four-crossings-brief.json
+
+      - name: Clone official OpenMontage at verified revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/charliewwdev/OpenMontage.git openmontage-src
+          cd openmontage-src
+          git checkout --detach "$OPENMONTAGE_UPSTREAM"
+          test -s docker-compose.studio.yml
+          test -s docker-compose.studio.minio.yml
+          test -s studio/server/app.py
+
+      - name: Configure local-only Studio with provider keys
+        shell: bash
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          VOLCENGINE_API_KEY: ${{ secrets.VOLCENGINE_API_KEY }}
+        run: |
+          set -euo pipefail
+          cd openmontage-src
+          cp studio/.env.example .env
+          chmod 600 .env
+          {
+            printf '\nSTUDIO_AUTH_REQUIRED=false\nSTUDIO_DEMO_ENABLED=true\nSTUDIO_REQUIRE_GITHUB_STAR=0\n'
+            printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY"
+            printf 'VOLCENGINE_API_KEY=%s\n' "$VOLCENGINE_API_KEY"
+            printf 'STUDIO_IMAGE_BACKEND=auto\nSTUDIO_VIDEO_BACKEND=auto\n'
+          } >> .env
+
+      - name: Start official OpenMontage Studio and media worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd openmontage-src
+          docker compose -f docker-compose.studio.yml -f docker-compose.studio.minio.yml up -d --build
+          python3 - <<'PY'
+          import json, time, urllib.request
+          for attempt in range(120):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:8787/api/health',timeout=8) as response:
+                      health=json.load(response)
+                  print('OpenMontage Studio health response received')
+                  break
+              except Exception:
+                  time.sleep(5)
+          else:
+              raise SystemExit('OpenMontage Studio did not become healthy within 10 minutes')
+          PY
+
+      - name: Run official OpenMontage auto-produce pipeline and download actual MP4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          python3 - <<'PY'
+          import json, time, urllib.request, urllib.error
+          from pathlib import Path
+          BASE='http://127.0.0.1:8787'
+          options=json.loads(Path('openmontage/four-crossings-brief.json').read_text(encoding='utf-8'))
+          raw=json.dumps(options,ensure_ascii=False).encode('utf-8')
+          req=urllib.request.Request(BASE+'/api/auto-produce', data=raw,headers={'Content-Type':'application/json'},method='POST')
+          with urllib.request.urlopen(req,timeout=60) as resp:
+              created=json.load(resp)
+          project_id=created.get('projectId')
+          if not project_id:
+              raise SystemExit('OpenMontage did not return a projectId')
+          print('Official OpenMontage project created:',project_id,flush=True)
+          Path('output/project-id.txt').write_text(str(project_id),encoding='utf-8')
+          deadline=time.monotonic()+6500
+          last=''
+          while time.monotonic()<deadline:
+              with urllib.request.urlopen(BASE+f'/api/projects/{project_id}/auto-produce',timeout=45) as resp:
+                  status=json.load(resp)
+              job=status.get('job') or {}
+              state=str(job.get('status') or '')
+              step=str(job.get('step') or '')
+              if (state,step)!=last:
+                  print('OpenMontage stage:',state,step,flush=True)
+                  last=(state,step)
+              if state=='failed':
+                  raise SystemExit('OpenMontage video generation failed: '+str(job.get('error')))
+              if state=='success':
+                  exports=job.get('exports') or []
+                  url=job.get('seriesUrl') or job.get('exportUrl') or (exports[0].get('url') if exports else '')
+                  if not url:
+                      raise SystemExit('OpenMontage reported success but did not return an MP4 export URL')
+                  if not str(url).startswith('/api/media/'):
+                      raise SystemExit('Unexpected OpenMontage media URL: '+str(url))
+                  with urllib.request.urlopen(BASE+url,timeout=180) as response:
+                      out=Path('output/four-crossings-openmontage.mp4')
+                      with out.open('wb') as f:
+                          import shutil
+                          shutil.copyfileobj(response,f)
+                  if out.stat().st_size<10240:
+                      raise SystemExit('OpenMontage MP4 is too small to be a real video')
+                  print('Downloaded real OpenMontage render:',out,out.stat().st_size,'bytes',flush=True)
+                  break
+              time.sleep(30)
+          else:
+              raise SystemExit('Timed out before OpenMontage produced an MP4')
+          PY
+          ffprobe -v error -show_entries format=duration,size -of json output/four-crossings-openmontage.mp4
+
+      - name: Upload only genuine OpenMontage video output
+        uses: actions/upload-artifact@v4
+        with:
+          name: four-crossings-openmontage-mp4
+          path: output/four-crossings-openmontage.mp4
+          if-no-files-found: error
+
+      - name: Collect diagnostics if failed
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p output
+          if [[ -d openmontage-src ]]; then
+            cd openmontage-src
+            docker compose -f docker-compose.studio.yml -f docker-compose.studio.minio.yml ps > ../output/compose-status.txt 2>&1 || true
+            docker compose -f docker-compose.studio.yml -f docker-compose.studio.minio.yml logs --tail=250 --no-color > ../output/compose-logs.txt 2>&1 || true
+          fi
+
+      - name: Upload failure diagnostics, not a fake MP4
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openmontage-debug
+          path: |
+            output/compose-status.txt
+            output/compose-logs.txt
+            output/project-id.txt
+          if-no-files-found: ignore

@@ -1,0 +1,29 @@
+name: PPT Master environment check
+on:
+  workflow_dispatch:
+jobs:
+  ppt-master:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out workspace
+        uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Clone official PPT Master
+        run: git clone --depth 1 https://github.com/hugohe3/ppt-master.git ppt-master
+      - name: Install PPT Master dependencies
+        run: python -m pip install -r ppt-master/requirements.txt
+      - name: Validate PPT Master skill
+        run: |
+          test -s ppt-master/skills/ppt-master/SKILL.md
+          echo "PPT Master installed; agent-driven authoring is a separate step."
+      - name: Upload installed skill for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: ppt-master-skill
+          path: |
+            ppt-master/skills/ppt-master/SKILL.md
+            ppt-master/requirements.txt

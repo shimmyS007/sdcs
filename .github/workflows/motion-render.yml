@@ -1,0 +1,50 @@
+name: Render OpenMotion-style documentary
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'motion/**'
+      - '.github/workflows/motion-render.yml'
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser automation
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+      - name: Capture video frames and encode silent MP4
+        run: |
+          mkdir -p out
+          cat > /tmp/render.cjs <<'JS'
+          const {chromium}=require(process.cwd()+'/node_modules/playwright');
+          const {spawn}=require('node:child_process');
+          const path=require('node:path');
+          (async()=>{
+            const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+            const page=await browser.newPage({viewport:{width:1920,height:1080},deviceScaleFactor:1});
+            await page.goto('file://'+path.resolve('motion/index.html'));
+            const ff=spawn('ffmpeg',['-y','-f','image2pipe','-framerate','30','-vcodec','png','-i','pipe:0','-an','-c:v','libx264','-preset','veryfast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart','out/chishui.mp4'],{stdio:['pipe','inherit','inherit']});
+            for(let i=0;i<7200;i++){
+              await page.evaluate(t=>window.renderFrame(t),i/30);
+              const png=await page.screenshot({type:'png'});
+              if(!ff.stdin.write(png))await new Promise(r=>ff.stdin.once('drain',r));
+              if(i%600===0)console.log('Frames:',i,'/7200');
+            }
+            ff.stdin.end();const code=await new Promise(r=>ff.on('close',r));
+            await browser.close();if(code!==0)process.exit(code);
+          })().catch(e=>{console.error(e);process.exit(1)});
+          JS
+          node /tmp/render.cjs
+      - name: Upload MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: chishui-motion-mp4
+          path: out/chishui.mp4
+          if-no-files-found: error

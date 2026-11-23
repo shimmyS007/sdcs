@@ -1,0 +1,12 @@
+{
+  "title": "四渡赤水｜电影感动态纪录片试映片",
+  "genre": "正剧",
+  "ratio": "16:9",
+  "visualStyle": "Cinematic historical documentary reconstruction, naturalistic 1935 southwest China, real moving shots with atmospheric depth, 35mm texture, restrained red accents, realistic mountains and rivers, no slide backgrounds, no poster layouts, no infographic text cards. Reenactments must not be claimed as actual archival footage.",
+  "brief": "制作《四渡赤水》电影感动态历史纪录片试映片，中文叙事，目标时长约三分钟，16:9。重点是画质、摄影机运动、真实影像感，不是文字PPT或静态图轻微缩放。镜头至少有连续动作：群山晨雾航拍推进、湿润山路行军跟拍、江面渡船运动、远景河谷地形变化、指挥部油灯下地图细节特写、军队纵队穿越山林、日落剪影等，剪辑采用景别变化与自然音效增强镜头连续性；标题字幕少而准确。四渡赤水史实需准确，视觉重演须注明‘历史场景艺术复原’，不得伪称真实历史照片。禁止生成PPT页式画面、满屏说明文字、静态插图序列、漂浮图标。音乐采用可授权的原创/许可配乐；不确定版权时不嵌入受保护音乐。先做一集，不批量制作其他影片。",
+  "episodeCount": 1,
+  "maxShots": 12,
+  "maxCharacters": 2,
+  "maxScenes": 5,
+  "maxProps": 5
+}

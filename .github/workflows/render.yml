@@ -20,6 +20,11 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Install FFmpeg verification tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          command -v ffprobe
       - name: Check compositions
         run: npx remotion compositions src/index.ts
       - name: Render MP4

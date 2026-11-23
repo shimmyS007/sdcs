@@ -15,6 +15,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Install FFmpeg and Chromium dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -n 1
+          ffprobe -version | head -n 1
       - name: Install browser automation
         run: |
           npm install --no-save playwright
@@ -41,7 +47,13 @@ jobs:
             await browser.close();if(code!==0)process.exit(code);
           })().catch(e=>{console.error(e);process.exit(1)});
           JS
+          node --check /tmp/render.cjs
+          command -v ffmpeg
           node /tmp/render.cjs
+      - name: Verify video
+        run: |
+          test -s out/chishui.mp4
+          ffprobe -v error -show_entries format=duration,size -of default=noprint_wrappers=1 out/chishui.mp4
       - name: Upload MP4
         uses: actions/upload-artifact@v4
         with:

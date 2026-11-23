@@ -1,0 +1,92 @@
+name: Wan 2.2 Video v2
+
+on:
+  push:
+    paths:
+      - '.github/workflows/wan22-video-v2.yml'
+  workflow_dispatch:
+    inputs:
+      run_gpu_generation:
+        description: 'Generate real AI video on a registered self-hosted GPU runner'
+        type: boolean
+        default: false
+      prompt:
+        description: 'English cinematic video prompt'
+        type: string
+        required: false
+        default: 'Cinematic historical reenactment in southwest China in 1935, soldiers walking through a misty mountain valley, natural tracking shot, photorealistic, no text'
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Verify model setup on GitHub-hosted runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Check workflow and model repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Wan-Video/Wan2.2.git wan2.2
+          test -s wan2.2/generate.py
+          test -s wan2.2/requirements.txt
+          echo 'Wan 2.2 source verified. This CPU job does NOT generate video.'
+      - name: Record validation result
+        run: |
+          mkdir -p output
+          printf 'Official Wan2.2 repository verified. Real video requires a separately registered NVIDIA GPU runner (self-hosted, linux, gpu).\n' > output/README.txt
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: wan22-validation-only
+          path: output/README.txt
+
+  generate:
+    name: Real Wan 2.2 inference (GPU required)
+    needs: validate
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_gpu_generation == true }}
+    runs-on: [self-hosted, linux, gpu]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Verify CUDA GPU
+        run: |
+          set -euo pipefail
+          nvidia-smi
+          python3 - <<'PY'
+          import subprocess
+          raw=subprocess.check_output(['nvidia-smi','--query-gpu=memory.total','--format=csv,noheader,nounits'],text=True)
+          values=[int(x.strip()) for x in raw.splitlines() if x.strip()]
+          if not values or max(values)<24576:
+              raise SystemExit('Requires NVIDIA CUDA GPU with >=24 GiB VRAM')
+          PY
+      - name: Clone Wan 2.2
+        run: git clone --depth 1 https://github.com/Wan-Video/Wan2.2.git wan2.2
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r wan2.2/requirements.txt
+          python3 -m pip install 'huggingface_hub[cli]'
+      - name: Download model
+        run: |
+          mkdir -p models/Wan2.2-TI2V-5B
+          hf download Wan-AI/Wan2.2-TI2V-5B --local-dir models/Wan2.2-TI2V-5B
+      - name: Generate real video
+        env:
+          VIDEO_PROMPT: ${{ inputs.prompt }}
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          cd wan2.2
+          python3 generate.py --task ti2v-5B --size '1280*704' --ckpt_dir ../models/Wan2.2-TI2V-5B --offload_model True --convert_model_dtype --t5_cpu --prompt "$VIDEO_PROMPT" --save_file ../output/wan22.mp4
+          test -s ../output/wan22.mp4
+      - name: Upload real MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: wan22-real-video
+          path: output/wan22.mp4
+          if-no-files-found: error

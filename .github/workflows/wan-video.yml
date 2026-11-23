@@ -23,8 +23,6 @@ jobs:
     # GitHub-hosted standard ubuntu-latest does not provide the required 24GB CUDA GPU.
     runs-on: [self-hosted, linux, gpu]
     timeout-minutes: 180
-    env:
-      HF_HOME: ${{ runner.temp }}/huggingface
     steps:
       - name: Check NVIDIA GPU and VRAM
         shell: bash
